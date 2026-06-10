@@ -25,9 +25,14 @@ from urllib.parse import quote_plus
 from _lib import finish_scrape_run, get_db, start_scrape_run
 
 # ── Target companies ────────────────────────────────────────────────────────
+# Prefer page_id over text search: it locks onto the exact advertiser Page and
+# avoids the false positives / misses that q= text search produces. Find a
+# page_id by opening the advertiser in the Ad Library and copying the
+# view_all_page_id value from the URL.
 TARGET_COMPANIES: dict[str, dict] = {
     "Brian Cain Peak Performance": {
         "search": "Brian Cain Peak Performance",
+        "page_id": "143436349038584",
         "source_match": "briancain",
     },
 }
@@ -37,13 +42,21 @@ SCROLL_PAUSE = 2.5   # seconds between scrolls
 MAX_SCROLLS  = 20    # cap to avoid infinite loops
 
 
-def build_url(search_term: str) -> str:
-    params = {
+def build_url(search_term: str | None = None, page_id: str | None = None) -> str:
+    """Build an Ad Library URL. Page-ID search is preferred when available."""
+    params: dict[str, str] = {
         "active_status": "active",
         "ad_type": "all",
         "country": "US",
-        "q": search_term,
+        "media_type": "all",
     }
+    if page_id:
+        params["search_type"] = "page"
+        params["is_targeted_country"] = "false"
+        params["view_all_page_id"] = page_id
+    else:
+        params["search_type"] = "keyword_unordered"
+        params["q"] = search_term or ""
     query = "&".join(f"{k}={quote_plus(str(v))}" for k, v in params.items())
     return f"{AD_LIBRARY_BASE}?{query}"
 
@@ -115,7 +128,8 @@ def compute_longevity(start_date_str: str | None) -> str:
 
 
 def scrape_company(page, company: str, cfg: dict, dry_run: bool) -> list[dict]:
-    url = build_url(cfg["search"])
+    page_id = cfg.get("page_id")
+    url = build_url(search_term=cfg.get("search"), page_id=page_id)
     print(f"  › {url}")
     if dry_run:
         print("  [dry-run] skipping browser load")
@@ -184,6 +198,7 @@ def scrape_company(page, company: str, cfg: dict, dry_run: bool) -> list[dict]:
 
         ads.append({
             "advertiser_name": company,
+            "advertiser_page_id": page_id,
             "creative_text": text.strip(),
             "ad_start_date": start_date,
             "landing_page_url": landing,
@@ -201,12 +216,13 @@ def insert_ads(conn: sqlite3.Connection, ads: list[dict]) -> int:
             conn.execute(
                 """
                 INSERT OR IGNORE INTO meta_ads
-                    (advertiser_name, creative_text, ad_start_date,
+                    (advertiser_name, advertiser_page_id, creative_text, ad_start_date,
                      landing_page_url, ad_url, ad_longevity_signal, scraped_at)
-                VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
                 """,
                 (
                     ad["advertiser_name"],
+                    ad.get("advertiser_page_id"),
                     ad["creative_text"],
                     ad.get("ad_start_date"),
                     ad.get("landing_page_url"),
@@ -225,6 +241,7 @@ def insert_ads(conn: sqlite3.Connection, ads: list[dict]) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--company", help="Exact company key from TARGET_COMPANIES")
+    parser.add_argument("--page-id", help="Meta Page ID (view_all_page_id) to scrape directly")
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -235,6 +252,9 @@ def main() -> int:
     targets: dict[str, dict] = {}
     if args.all:
         targets = TARGET_COMPANIES
+    elif args.page_id:
+        # Ad-hoc target: scrape any advertiser by Page ID without editing the file.
+        targets[args.company] = {"search": args.company, "page_id": args.page_id}
     else:
         if args.company not in TARGET_COMPANIES:
             # Try case-insensitive match
