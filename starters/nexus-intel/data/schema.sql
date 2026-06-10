@@ -282,3 +282,48 @@ ORDER BY
   END,
   post_age_days ASC,
   sig.created_at DESC;
+
+-- ── Meta Ad Library ────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS refresh_batches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  approved_at TEXT
+);
+INSERT OR IGNORE INTO refresh_batches (id, name, approved_at)
+  VALUES (0, 'default', datetime('now'));
+
+CREATE TABLE IF NOT EXISTS meta_ads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  advertiser_name TEXT NOT NULL,
+  source_id INTEGER REFERENCES sources(id),
+  ad_platform TEXT DEFAULT 'meta',
+  ad_url TEXT,
+  advertiser_page_id TEXT,
+  landing_page_url TEXT,
+  ad_start_date TEXT,
+  creative_text TEXT,
+  -- taxonomy (Claude-classified)
+  primary_hook TEXT,
+  persona_targeted TEXT,
+  pain_point TEXT,
+  promised_outcome TEXT,
+  offer_type TEXT,
+  funnel_stage TEXT,
+  proof_used TEXT,
+  category_narrative TEXT,
+  ad_longevity_signal TEXT,
+  creative_pattern TEXT,
+  messaging_angle TEXT,
+  counter_positioning TEXT,
+  content_opportunity TEXT,
+  outbound_angle TEXT,
+  -- housekeeping
+  scraped_at TEXT DEFAULT (datetime('now')),
+  classified_at TEXT,
+  batch_id INTEGER REFERENCES refresh_batches(id) DEFAULT 0,
+  UNIQUE(advertiser_name, ad_url)
+);
+CREATE INDEX IF NOT EXISTS idx_meta_ads_advertiser ON meta_ads(advertiser_name);
+CREATE INDEX IF NOT EXISTS idx_meta_ads_classified ON meta_ads(classified_at);
